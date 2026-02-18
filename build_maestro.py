@@ -67,6 +67,17 @@ def procesar_conduits(df_inicial: pd.DataFrame, df_final: pd.DataFrame) -> pd.Da
         * Final   + Phase Created   = 'Nueva Construcción' → NUEVO
         * Final   + Phase Created   = 'Existente'          → PERSISTENTE
     """
+    # ── Diagnóstico de unidades de Length ──
+    # Revit puede exportar en mm, cm, ft o m según la plantilla de exportación.
+    # Para telecomunicaciones urbanas, el promedio por elemento debería ser < 50 m.
+    length_vals = pd.to_numeric(df_final["Length"], errors="coerce").dropna()
+    if len(length_vals) > 0:
+        length_mean = length_vals.mean()
+        length_max  = length_vals.max()
+        print(f"  📏 Length conduits: media={length_mean:.1f}  max={length_max:.1f}")
+        if length_mean > 500:
+            print(f"     ⚠️  Media muy alta — posibles mm en lugar de m en el Excel de Revit.")
+
     registros = []
 
     # --- DEMOLIDOS (vienen del estado inicial) ---
@@ -269,36 +280,82 @@ def asignar_precios(df_consolidado: pd.DataFrame,
 # 5. CÁLCULO DE COSTOS
 # ─────────────────────────────────────────────────────────
 
+def _validar_y_limpiar(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Valida tipos numéricos y detecta valores imposibles ANTES de calcular costos.
+    Registra en consola qué filas fueron corregidas. No elimina filas, solo las
+    marca como NaN para que no contaminen los cálculos.
+
+    Umbrales para telecomunicaciones urbanas (Metro Medellín):
+      - Conduit individual > 2 000 m  → probable error de unidades (mm en vez de m)
+      - Precio unitario > 5 000 M COP → valor claramente imposible
+    """
+    df = df.copy()
+
+    # ── Coerción de tipos ──
+    df["cantidad"]        = pd.to_numeric(df["cantidad"],        errors="coerce")
+    df["precio_unitario"] = pd.to_numeric(df["precio_unitario"], errors="coerce")
+
+    # ── Longitudes imposibles (Conduits) ──
+    UMBRAL_ML = 2_000
+    mask_ml = (df["categoria"] == "Conduits") & df["cantidad"].notna() & (df["cantidad"] > UMBRAL_ML)
+    if mask_ml.sum() > 0:
+        print(f"\n  ⚠️  {mask_ml.sum()} conduits con longitud > {UMBRAL_ML} m — posible error de unidades en Revit")
+        print(df[mask_ml][["id","family","type","diametro","cantidad"]].head(5).to_string(index=False))
+        df.loc[mask_ml, "cantidad"] = np.nan
+        df.loc[mask_ml, "dato_corregido"] = True
+
+    # ── Precios unitarios imposibles ──
+    UMBRAL_PU = 5_000_000_000
+    mask_pu = df["precio_unitario"].notna() & (df["precio_unitario"] > UMBRAL_PU)
+    if mask_pu.sum() > 0:
+        print(f"\n  ⚠️  {mask_pu.sum()} elementos con precio_unitario > $5 000 M COP — se anulan")
+        df.loc[mask_pu, "precio_unitario"] = np.nan
+        df.loc[mask_pu, "dato_corregido"] = True
+
+    if "dato_corregido" not in df.columns:
+        df["dato_corregido"] = False
+
+    return df
+
+
 def calcular_costos(df: pd.DataFrame, factor_demolicion: float = 0.25) -> pd.DataFrame:
     """
     Calcula los costos según el estado de cada elemento.
-    
+
     - NUEVO       → costo_nuevo = cantidad × precio_unitario
     - DEMOLIDO    → costo_demolicion = cantidad × precio_unitario × factor_demolicion
     - PERSISTENTE → ambos costos = 0 (no genera inversión nueva)
+
+    Incluye validación de datos para evitar overflows por errores de unidades en Revit.
     """
-    df = df.copy()
+    df = _validar_y_limpiar(df)
 
     # Inicializar columnas en cero
     df["costo_nuevo"]      = 0.0
     df["costo_demolicion"] = 0.0
 
-    # Máscara por estado
-    mask_nuevo     = df["estado"] == "NUEVO"
-    mask_demolido  = df["estado"] == "DEMOLIDO"
+    mask_nuevo    = df["estado"] == "NUEVO"
+    mask_demolido = df["estado"] == "DEMOLIDO"
 
     df.loc[mask_nuevo, "costo_nuevo"] = (
-        df.loc[mask_nuevo, "cantidad"] * df.loc[mask_nuevo, "precio_unitario"]
+        (df.loc[mask_nuevo, "cantidad"] * df.loc[mask_nuevo, "precio_unitario"])
+        .fillna(0.0)
     )
-
     df.loc[mask_demolido, "costo_demolicion"] = (
-        df.loc[mask_demolido, "cantidad"]
-        * df.loc[mask_demolido, "precio_unitario"]
-        * factor_demolicion
+        (df.loc[mask_demolido, "cantidad"]
+         * df.loc[mask_demolido, "precio_unitario"]
+         * factor_demolicion)
+        .fillna(0.0)
     )
 
-    # Costo total por elemento
     df["costo_total"] = df["costo_nuevo"] + df["costo_demolicion"]
+
+    # Reporte de rango para auditoría
+    print(f"  📊 costo_total por elemento → "
+          f"min=${df['costo_total'].min():,.0f}  "
+          f"max=${df['costo_total'].max():,.0f}  "
+          f"suma=${df['costo_total'].sum():,.0f}")
 
     return df
 
@@ -350,13 +407,18 @@ def construir_dataframe_maestro(rutas: dict,
     df_consolidado = calcular_costos(df_consolidado, factor_demolicion)
 
     # Ordenar columnas finales
+    # Calcular costos aquí para que dato_corregido exista antes de ordenar columnas
     columnas_orden = [
         "id", "categoria", "family", "type", "diametro",
         "nombre_sistema", "categoria_sistema",
         "estado", "cantidad", "unidad",
         "precio_unitario", "precio_encontrado",
-        "costo_nuevo", "costo_demolicion", "costo_total"
+        "costo_nuevo", "costo_demolicion", "costo_total",
+        "dato_corregido",
     ]
+    # Asegurar que dato_corregido exista (se crea en calcular_costos)
+    if "dato_corregido" not in df_consolidado.columns:
+        df_consolidado["dato_corregido"] = False
     df_consolidado = df_consolidado[columnas_orden]
 
     return df_consolidado

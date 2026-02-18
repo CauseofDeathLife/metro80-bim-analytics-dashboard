@@ -1,0 +1,12 @@
+# Entorno virtual
+.venv/
+
+# Archivos compilados
+__pycache__/
+*.pyc
+
+# Configuración de PyCharm
+.idea/
+
+# DataFrame generado automáticamente
+DataFrame_Maestro_Tramo1.xlsx
