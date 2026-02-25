@@ -130,8 +130,9 @@ st.markdown("""
 
     /* ── Pestañas de navegación: negrita y tamaño correcto ── */
     button[data-baseweb="tab"] p {
-        font-size: 15px !important;
+        font-size: 18px !important;
         font-weight: 700 !important;
+        letter-spacing: -0.2px;
     }
     button[data-baseweb="tab"][aria-selected="true"] p {
         color: #1a56db !important;
@@ -324,6 +325,17 @@ with st.sidebar:
         format_func=lambda x: {"DEMOLIDO": "Demolido", "NUEVO": "Proyectado", "PERSISTENTE": "Existente a Mantener"}[x],
         default=["DEMOLIDO", "NUEVO", "PERSISTENTE"]
     )
+    # Filtro por Tipo — se actualiza dinámicamente según Categoría seleccionada
+    tipos_disp_raw = sorted(df_base[
+        df_base["categoria"] == filtro_cat if filtro_cat != "Todas" else df_base["categoria"].notna()
+    ]["type"].unique().tolist())
+    filtro_tipo = st.multiselect(
+        "Tipo / Familia",
+        options=tipos_disp_raw,
+        default=[],
+        placeholder="Todos los tipos",
+        help="Filtra por tipo o familia específica. Si no seleccionas nada, se muestran todos."
+    )
 
 
 # Recalcular SIEMPRE desde df_base → el slider nunca acumula errores
@@ -438,9 +450,13 @@ with tab2:
         df_filtrado = df_filtrado[df_filtrado["categoria"] == filtro_cat]
     if filtro_est:
         df_filtrado = df_filtrado[df_filtrado["estado"].isin(filtro_est)]
+    if filtro_tipo:
+        df_filtrado = df_filtrado[df_filtrado["type"].isin(filtro_tipo)]
 
+    etiq_est = [{"DEMOLIDO":"Demolido","NUEVO":"Proyectado","PERSISTENTE":"Existente a Mantener"}.get(e,e) for e in filtro_est]
+    etiq_tipo = ", ".join(filtro_tipo) if filtro_tipo else "Todos"
     st.markdown(f"**Mostrando {len(df_filtrado):,} de {len(df):,} elementos** · "
-                f"Categoría: `{filtro_cat}` · Estados: `{', '.join(filtro_est)}`")
+                f"Categoría: `{filtro_cat}` · Estados: `{', '.join(etiq_est)}` · Tipo: `{etiq_tipo}`")
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── KPIs del filtro activo — mismas tarjetas HTML que Pestaña 1 ──
@@ -473,7 +489,11 @@ with tab2:
             st.plotly_chart(barra_con_margen(fig), use_container_width=True)
 
     with col2:
-        costo_tipo = df_filtrado.groupby(["type","estado"]).agg(costo=("costo_total","sum")).reset_index()
+        costo_tipo = df_filtrado.groupby(["type","estado"]).agg(
+            costo=("costo_total","sum"),
+            cantidad=("cantidad","sum"),
+            elementos=("id","count")
+        ).reset_index()
         top10 = costo_tipo.groupby("type")["costo"].sum().nlargest(10).index
         costo_tipo = costo_tipo[costo_tipo["type"].isin(top10)]
         if not costo_tipo.empty:
@@ -481,9 +501,17 @@ with tab2:
                          color_discrete_map=COLORES,
                          title="Costo Total (COP) por Tipo — Top 10",
                          labels={"costo":"COP","type":"Tipo","estado":"Estado"},
-                         barmode="stack")
+                         barmode="stack",
+                         custom_data=["elementos","cantidad"])
             fig.update_traces(
-                hovertemplate="<b>Tipo:</b> %{x}<br><b>Costo:</b> $ %{y:,.0f}<extra>%{fullData.name}</extra>"
+                hovertemplate=(
+                    "<b>Tipo:</b> %{x}<br>"
+                    "<b>Estado:</b> %{fullData.name}<br>"
+                    "<b>Elementos:</b> %{customdata[0]:,}<br>"
+                    "<b>Cantidad:</b> %{customdata[1]:,.1f}<br>"
+                    "<b>Costo:</b> $ %{y:,.0f}"
+                    "<extra></extra>"
+                )
             )
             st.plotly_chart(barra_con_margen(fig), use_container_width=True)
 
@@ -510,16 +538,28 @@ with tab2:
 
     with col2:
         costo_diam = (df_filtrado[df_filtrado["diametro"] != "N/A"]
-                      .groupby(["diametro","estado"]).agg(costo=("costo_total","sum")).reset_index())
+                      .groupby(["diametro","estado"]).agg(
+                          costo=("costo_total","sum"),
+                          elementos=("id","count"),
+                          cantidad=("cantidad","sum")
+                      ).reset_index())
         if not costo_diam.empty:
             fig = px.bar(costo_diam, x="diametro", y="costo", color="estado",
                          color_discrete_map=COLORES,
                          title="Costo Total (COP) por Diámetro",
                          labels={"costo":"COP","diametro":"Diámetro","estado":"Estado"},
                          barmode="stack",
-                         category_orders={"diametro": orden_diam})
+                         category_orders={"diametro": orden_diam},
+                         custom_data=["elementos","cantidad"])
             fig.update_traces(
-                hovertemplate="<b>Diámetro:</b> %{x}<br><b>Costo:</b> $ %{y:,.0f}<extra>%{fullData.name}</extra>"
+                hovertemplate=(
+                    "<b>Diámetro:</b> %{x}<br>"
+                    "<b>Estado:</b> %{fullData.name}<br>"
+                    "<b>Elementos:</b> %{customdata[0]:,}<br>"
+                    "<b>Cantidad:</b> %{customdata[1]:,.1f}<br>"
+                    "<b>Costo:</b> $ %{y:,.0f}"
+                    "<extra></extra>"
+                )
             )
             fig.update_layout(xaxis=dict(type="category"))
             st.plotly_chart(barra_con_margen(fig), use_container_width=True)

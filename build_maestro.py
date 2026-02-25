@@ -4,7 +4,7 @@ SISTEMA DE ANÁLISIS BIM – TRAMO 1 | Metro 80, Medellín
 =========================================================
 Paso 1: Construcción del DataFrame Maestro Consolidado
 
-Autor: generado con Claude + datos exportados desde Revit
+Autor: Datos exportados desde Revit
 =========================================================
 """
 
@@ -67,7 +67,7 @@ def procesar_conduits(df_inicial: pd.DataFrame, df_final: pd.DataFrame) -> pd.Da
         * Final   + Phase Created   = 'Nueva Construcción' → NUEVO
         * Final   + Phase Created   = 'Existente'          → PERSISTENTE
     """
-    # ── Diagnóstico de unidades de Length ──
+    #  Diagnóstico de unidades de Length
     # Revit puede exportar en mm, cm, ft o m según la plantilla de exportación.
     # Para telecomunicaciones urbanas, el promedio por elemento debería ser < 50 m.
     length_vals = pd.to_numeric(df_final["Length"], errors="coerce").dropna()
@@ -250,7 +250,7 @@ def asignar_precios(df_consolidado: pd.DataFrame,
     
     Estrategia:
     - Conduits y Fittings → join por (type + diametro)
-    - Fixtures            → join por (family)
+    - Fixtures→ join por (family)
     """
     df = df_consolidado.copy()
 
@@ -287,7 +287,7 @@ def _validar_y_limpiar(df: pd.DataFrame) -> pd.DataFrame:
     marca como NaN para que no contaminen los cálculos.
 
     Umbrales para telecomunicaciones urbanas (Metro Medellín):
-      - Conduit individual > 2 000 m  → probable error de unidades (mm en vez de m)
+      - Conduit individual > 2 000 m→ probable error de unidades (mm en vez de m)
       - Precio unitario > 5 000 M COP → valor claramente imposible
     """
     df = df.copy()
@@ -323,8 +323,8 @@ def calcular_costos(df: pd.DataFrame, factor_demolicion: float = 0.25) -> pd.Dat
     """
     Calcula los costos según el estado de cada elemento.
 
-    - NUEVO       → costo_nuevo = cantidad × precio_unitario
-    - DEMOLIDO    → costo_demolicion = cantidad × precio_unitario × factor_demolicion
+    - NUEVO→ costo_nuevo = cantidad × precio_unitario
+    - DEMOLIDO→ costo_demolicion = cantidad × precio_unitario × factor_demolicion
     - PERSISTENTE → ambos costos = 0 (no genera inversión nueva)
 
     Incluye validación de datos para evitar overflows por errores de unidades en Revit.
@@ -350,6 +350,11 @@ def calcular_costos(df: pd.DataFrame, factor_demolicion: float = 0.25) -> pd.Dat
     )
 
     df["costo_total"] = df["costo_nuevo"] + df["costo_demolicion"]
+
+    # Redondear costos a pesos enteros (COP)
+    df["costo_nuevo"] = df["costo_nuevo"].round(0)
+    df["costo_demolicion"] = df["costo_demolicion"].round(0)
+    df["costo_total"] = df["costo_total"].round(0)
 
     # Reporte de rango para auditoría
     print(f"  📊 costo_total por elemento → "
